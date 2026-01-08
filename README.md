@@ -22,6 +22,11 @@ uvicorn app.main:app --reload
 docker compose up
 ```
 
+This starts three services:
+- `redis` for the queue backend
+- `api` for the FastAPI server
+- `worker` for RQ job execution
+
 ## Endpoints
 
 `POST /analyze-note`
@@ -35,6 +40,8 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/analyze-note -ContentT
 `POST /analyze-note-async` returns a `job_id` and processes the note in a background worker.
 
 `GET /analyze-note-status/{job_id}` returns status and, when complete, the result payload.
+
+If a job is missing or expired, the status endpoint returns 404 with `JOB_NOT_FOUND`.
 
 ## LLM Configuration
 
