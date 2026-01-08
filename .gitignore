@@ -1,0 +1,4 @@
+.env
+app/__pycache__
+.venv/
+app/llm/__pycache__
