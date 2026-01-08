@@ -3,6 +3,8 @@ import time
 
 from fastapi import APIRouter, HTTPException
 from rq.job import Job
+from rq.exceptions import NoSuchJobError
+from rq import Retry
 
 from .models import NoteRequest, NoteResponse
 from .settings import settings
@@ -69,13 +71,19 @@ def analyze_note(payload: NoteRequest) -> NoteResponse:
 
 @router.post("/analyze-note-async")
 def analyze_note_async(payload: NoteRequest):
-    job = queue.enqueue(analyze_note_job, payload.model_dump(), retry=3)
+    job = queue.enqueue(analyze_note_job, payload.model_dump(), retry=Retry(max=3))
     return {"job_id": job.id}
 
 
 @router.get("/analyze-note-status/{job_id}")
 def analyze_note_status(job_id: str):
-    job = Job.fetch(job_id, connection=redis_conn)
+    try:
+        job = Job.fetch(job_id, connection=redis_conn)
+    except NoSuchJobError:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "JOB_NOT_FOUND", "message": "Job not found or expired."},
+        )
     if job.is_finished:
         return {"status": "finished", "result": job.result}
     if job.is_failed:
