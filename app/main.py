@@ -11,7 +11,16 @@ logging.basicConfig(
 
 app = FastAPI(title="Clinical QA API")
 app.include_router(api_router)
+from .queue import redis_conn, logger  # import after logging configured
 
+
+@app.on_event("startup")
+def check_redis():
+    try:
+        redis_conn.ping()
+        logger.info("redis connected host=%s port=%s db=%s", "localhost", 6379, 0)
+    except Exception as exc:
+        logger.warning("redis connection failed error=%s", exc)
 
 @app.get("/health")
 def health() -> dict:

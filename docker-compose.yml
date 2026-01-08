@@ -27,3 +27,24 @@ services:
     command: >
       sh -c "pip install -r requirements.txt &&
              uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+  worker:
+    image: python:3.11-slim
+    container_name: clinical-qa-worker
+    working_dir: /app
+    volumes:
+      - .:/app
+    environment:
+      - LLM_PROVIDER=${LLM_PROVIDER:-mock}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
+      - OPENAI_TIMEOUT_SECONDS=${OPENAI_TIMEOUT_SECONDS:-30}
+      - MAX_RETRIES=${MAX_RETRIES:-1}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=${REDIS_DB:-0}
+    depends_on:
+      - redis
+    command: >
+      sh -c "pip install -r requirements.txt &&
+             rq worker qa"
