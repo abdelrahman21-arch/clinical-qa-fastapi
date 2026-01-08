@@ -16,7 +16,13 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
-## Endpoint
+## Run With Redis Queue (Docker)
+
+```powershell
+docker compose up
+```
+
+## Endpoints
 
 `POST /analyze-note`
 
@@ -25,6 +31,10 @@ Example:
 ```powershell
 Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/analyze-note -ContentType "application/json" -Body '{"note_text":"Patient reports shoulder pain after lifting a box. Exam: ROM limited.","note_type":"initial evaluation","date_of_service":"2024-01-15","date_of_injury":"2024-01-10"}'
 ```
+
+`POST /analyze-note-async` returns a `job_id` and processes the note in a background worker.
+
+`GET /analyze-note-status/{job_id}` returns status and, when complete, the result payload.
 
 ## LLM Configuration
 
@@ -44,6 +54,7 @@ $env:OPENAI_MODEL = "gpt-4o-mini"
 - The LLM must return strict JSON per schema.
 - Responses are validated with Pydantic; invalid output triggers a retry.
 - The LLM client is swappable via `LLM_PROVIDER`.
+- Async processing uses Redis + RQ to queue jobs and return a `job_id`.
 
 ## Logging And Metrics
 
@@ -56,9 +67,11 @@ $env:OPENAI_MODEL = "gpt-4o-mini"
 - Simple retry logic; not a full safety pipeline.
 - Prompt-based control rather than fine-tuning.
 - No PHI redaction or audit trail.
+- Async queue results are stored in Redis job state, not a durable database.
 
 ## Failure Modes
 
 - Invalid input payload returns a 422 validation error from FastAPI.
 - If the LLM returns invalid JSON after retries, the API returns 502 with `LLM_RESPONSE_INVALID`.
 - Provider errors (network, quota, bad key) surface as 500s unless handled upstream.
+- Async jobs can fail if Redis is unavailable or a worker is not running.
