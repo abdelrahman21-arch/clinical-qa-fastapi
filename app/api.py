@@ -9,7 +9,10 @@ from .models import NoteRequest, NoteResponse
 from .settings import settings
 from .llm.mock_client import MockClient
 from .llm.openai_client import OpenAIClient
-
+from .queue import queue
+from .jobs import analyze_note_job
+from rq.job import Job
+from .queue import redis_conn
 router = APIRouter()
 logger = logging.getLogger("app.api")
 _PROMPT_PATH = Path(__file__).parent / "prompts" / "qa_prompt.txt"
@@ -99,3 +102,16 @@ def analyze_note(payload: NoteRequest) -> NoteResponse:
             "message": last_error or "LLM response failed validation.",
         },
     )
+@router.post("/analyze-note-async")
+def analyze_note_async(payload: NoteRequest):
+    job = queue.enqueu(analyze_note_job, payload.model_dump(), retry=3)
+    return {"job_id": job.id}
+
+@router.get("/analyze-note-status/{job_id}")
+def analyze_note_status(job_id: str):
+    job = Job.fetch(job_id, connection=redis_conn)
+    if job.is_finished:
+        return {"status": "finished", "result": job.result}
+    if job.is_failed:
+        return {"status": "failed", "result": job.result}
+    return {"status": job.get_status()}
