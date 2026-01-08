@@ -1,69 +1,32 @@
-import json
 import logging
 import time
-from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
+from rq.job import Job
 
 from .models import NoteRequest, NoteResponse
 from .settings import settings
-from .llm.mock_client import MockClient
-from .llm.openai_client import OpenAIClient
+from .analyzer import build_user_prompt, get_client, parse_response, system_prompt
 from .queue import queue
-from .jobs import analyze_note_job
-from rq.job import Job
 from .queue import redis_conn
+from .jobs import analyze_note_job
+
 router = APIRouter()
 logger = logging.getLogger("app.api")
-_PROMPT_PATH = Path(__file__).parent / "prompts" / "qa_prompt.txt"
-_SYSTEM_PROMPT = _PROMPT_PATH.read_text(encoding="utf-8")
-
-
-def _get_client():
-    provider = settings.llm_provider.lower()
-    if provider == "openai":
-        if not settings.openai_api_key:
-            raise RuntimeError("OPENAI_API_KEY is required for openai provider.")
-        return OpenAIClient(
-            api_key=settings.openai_api_key,
-            model=settings.openai_model,
-            timeout_seconds=settings.openai_timeout_seconds,
-        )
-    if provider == "mock":
-        return MockClient()
-    raise RuntimeError(f"Unsupported LLM provider: {settings.llm_provider}")
-
-
-def _build_user_prompt(payload: NoteRequest) -> str:
-    return (
-        "Analyze the clinical note and metadata below.\n\n"
-        f"note_type: {payload.note_type}\n"
-        f"date_of_service: {payload.date_of_service}\n"
-        f"date_of_injury: {payload.date_of_injury}\n\n"
-        "note_text:\n"
-        f"{payload.note_text}\n"
-    )
-
-
-def _parse_response(raw_text: str) -> NoteResponse:
-    try:
-        data = json.loads(raw_text)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"Invalid JSON: {exc}") from exc
-    return NoteResponse.model_validate(data)
 
 
 @router.post("/analyze-note", response_model=NoteResponse)
 def analyze_note(payload: NoteRequest) -> NoteResponse:
     start_time = time.perf_counter()
-    client = _get_client()
-    user_prompt = _build_user_prompt(payload)
+    client = get_client()
+    user_prompt = build_user_prompt(payload)
+    system = system_prompt()
 
     last_error: str | None = None
     for attempt in range(settings.max_retries + 1):
-        raw_text = client.generate(system_prompt=_SYSTEM_PROMPT, user_prompt=user_prompt)
+        raw_text = client.generate(system_prompt=system, user_prompt=user_prompt)
         try:
-            response = _parse_response(raw_text)
+            response = parse_response(raw_text)
             latency_ms = int((time.perf_counter() - start_time) * 1000)
             logger.info(
                 "analyze_note success latency_ms=%s score=%s grade=%s flags=%s note_chars=%s",
@@ -102,10 +65,13 @@ def analyze_note(payload: NoteRequest) -> NoteResponse:
             "message": last_error or "LLM response failed validation.",
         },
     )
+
+
 @router.post("/analyze-note-async")
 def analyze_note_async(payload: NoteRequest):
-    job = queue.enqueu(analyze_note_job, payload.model_dump(), retry=3)
+    job = queue.enqueue(analyze_note_job, payload.model_dump(), retry=3)
     return {"job_id": job.id}
+
 
 @router.get("/analyze-note-status/{job_id}")
 def analyze_note_status(job_id: str):
